@@ -1,0 +1,10 @@
+{
+  "name": "wmar-check",
+  "private": true,
+  "type": "module",
+  "scripts": { "start": "node wmar.js" },
+  "dependencies": {
+    "@playwright/test": "^1.46.0",
+    "nodemailer": "^6.9.14"
+  }
+}
