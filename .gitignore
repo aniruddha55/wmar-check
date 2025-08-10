@@ -1,0 +1,22 @@
+# Node.js dependencies
+node_modules/
+package-lock.json
+
+# Local environment variables / secrets
+.wmar_env
+
+# Logs and errors
+*.log
+*.err
+
+# Backup files (Emacs, etc.)
+*~
+
+# Playwright browser cache (large)
+**/ms-playwright/
+
+# State tracking file (do NOT push daily status)
+.wmar_state.json
+
+# Mac system files
+.DS_Store
