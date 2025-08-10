@@ -1,5 +1,4 @@
-// LATEST this is latest
-// wmar.js
+// LATEST — robust CI version with landing-link entry + HTML/screenshot diagnostics
 import { chromium } from '@playwright/test';
 import nodemailer from 'nodemailer';
 import fs from 'fs';
@@ -7,7 +6,7 @@ import fs from 'fs';
 // ---------- config ----------
 const SUBJECT = process.env.MAIL_SUBJECT || 'WMAR — amended return (daily)';
 const RESULT_SHOT = (process.env.RESULT_SHOT ?? '0') === '1';
-const STATE_FILE = process.env.STATE_PATH || ''; // e.g. ".wmar_state.json" to enable "No change since yesterday"
+const STATE_FILE = process.env.STATE_PATH || ''; // e.g. ".wmar_state.json"
 
 // ---------- utils ----------
 function formatSSN(raw) {
@@ -56,7 +55,7 @@ function appendHistory(row){
   }catch{}
 }
 
-// ---------- helpers to find contexts ----------
+// ---------- context finders ----------
 async function findFrameWith(page, testFn, timeoutMs = 20000) {
   const start = Date.now();
   while (Date.now() - start < timeoutMs) {
@@ -68,19 +67,18 @@ async function findFrameWith(page, testFn, timeoutMs = 20000) {
   return null;
 }
 async function getFormContext(page, steps, attempt=1) {
-  // A) Top page?
+  // Top page?
   try {
     const topInputs = page.locator('main input, form input');
     await topInputs.first().waitFor({ state: 'visible', timeout: attempt === 1 ? 3000 : 6000 });
     if ((await topInputs.count()) >= 3) { steps.push('formCtx:top'); return page; }
   } catch {}
-  // B) Any frame with >=3 inputs
+  // Any frame with >=3 inputs
   const f = await findFrameWith(page, async fr => (await fr.locator('input').count()) >= 3, attempt === 1 ? 8000 : 15000);
   if (f) { steps.push(`formCtx:frame:${f.url()}`); return f; }
   return null;
 }
 async function getYearContext(page, steps) {
-  // Year select can also sometimes be top‑page
   try {
     const btn = page.getByRole('button', { name: /^continue$/i });
     const radios = page.getByRole('radio');
@@ -101,9 +99,8 @@ async function getResultContext(page, steps) {
   return null;
 }
 
-// ---------- fill inside a context (page or frame) ----------
+// ---------- fill helpers ----------
 async function fillInside(ctx, { ssn, dob, zip }, steps) {
-  // labels
   try {
     const ssnI = ctx.getByLabel(/Social Security number/i);
     const dobI = ctx.getByLabel(/Date of birth/i);
@@ -116,14 +113,12 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
     await ssnI.fill(ssn); await dobI.fill(dob); await zipI.fill(zip);
     steps.push('fill:labels'); return;
   } catch {}
-  // css
   try {
     await ctx.locator('input[name="tin"], input[id*="ssn"], input[aria-label*="Social"]').first().fill(ssn, { timeout: 2000 });
     await ctx.locator('input[name*="dob"], input[aria-label*="Date of birth"]').first().fill(dob);
     await ctx.locator('input[name*="zip"], input[aria-label*="Zip"]').first().fill(zip);
     steps.push('fill:css'); return;
   } catch {}
-  // dom
   await ctx.waitForSelector('input', { timeout: 5000 });
   await ctx.evaluate(({ ssn, dob, zip }) => {
     const root = document.querySelector('main') || document;
@@ -161,7 +156,6 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
     viewport: { width: 1280, height: 900 }
   });
   await ctx.addInitScript(() => {
-    // reduce “headless” fingerprints a bit
     Object.defineProperty(navigator, 'webdriver', { get: () => false });
   });
   const page = await ctx.newPage();
@@ -171,27 +165,43 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
   const log  = s => { steps.push(s); console.log('STEP:', s, 'URL:', page.url()); };
   const slow = async () => { if (SLOW_FLOW_MS > 0) await page.waitForTimeout(SLOW_FLOW_MS); };
   const shot = async (name) => { try { await page.screenshot({ path: name, fullPage: true }); } catch {} };
+  const dump = async (tag) => {
+    try {
+      await fs.promises.writeFile(`wmar-${tag}.html`, await page.content());
+      await shot(`wmar-${tag}.png`);
+      console.log('Frames:', page.frames().map(f => f.url()).join(' | '));
+      console.log('Top inputs count:', await page.locator('main input, form input').count());
+    } catch {}
+  };
 
   try {
-    // 1) Shared secrets (with retries + top/iframe fallback)
+    // 1) Landing page → click the WMAR link (sets session cookies), then fallback to direct URL
     log('goto:/wmar');
-    await page.goto('https://sa.www4.irs.gov/wmar/', { waitUntil: 'domcontentloaded' }); await slow();
+    await page.goto('https://sa.www4.irs.gov/wmar/', { waitUntil: 'networkidle', timeout: 90000 }); await slow();
+    try {
+      const wmarLink = page.getByRole('link', { name: /Where's My Amended Return/i });
+      if (await wmarLink.isVisible().catch(()=>false)) {
+        await wmarLink.click();
+        await page.waitForLoadState('networkidle', { timeout: 60000 });
+      }
+    } catch {}
 
+    // 2) SharedSecrets with retries + diagnostics
     let formCtx = null;
     for (let attempt = 1; attempt <= 3; attempt++) {
       log(`goto:/wmar/sharedSecrets (attempt ${attempt})`);
-      await page.goto('https://sa.www4.irs.gov/wmar/sharedSecrets', { waitUntil: attempt === 1 ? 'domcontentloaded' : 'networkidle' });
+      await page.goto('https://sa.www4.irs.gov/wmar/sharedSecrets', { waitUntil: attempt === 1 ? 'domcontentloaded' : 'networkidle', timeout: 90000 });
       await slow();
       formCtx = await getFormContext(page, steps, attempt);
       if (formCtx) break;
-      await shot(`wmar-noform-a${attempt}.png`);
-      await page.waitForTimeout(1000);
+      await dump(`noform-a${attempt}`);
+      await page.waitForTimeout(1200);
     }
     if (!formCtx) throw new Error('Could not find form for formFrame');
 
     log('fill-form');
     await fillInside(formCtx, { ssn, dob, zip }, steps); await slow();
-    if (VERIFY_MS > 0) { await page.waitForTimeout(VERIFY_MS); }
+    if (VERIFY_MS > 0) await page.waitForTimeout(VERIFY_MS);
 
     if (!doSubmit) { console.log('SUBMIT=0, stop after fill'); await new Promise(()=>{}); return; }
 
@@ -210,15 +220,17 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
       if (await backBtn.isVisible().catch(()=>false)) { await backBtn.click(); await page.waitForLoadState('domcontentloaded'); }
     }
 
-    // 2) selectTaxYear (top or frame)
+    // 3) selectTaxYear
     if (page.url().includes('/selectTaxYear')) {
       log('get-year-ctx');
       const yearCtx = await getYearContext(page, steps);
-      if (!yearCtx) { await shot('wmar-noyear.png'); throw new Error('Could not find year select'); }
+      if (!yearCtx) { await dump('noyear'); throw new Error('Could not find year select'); }
 
       let selected = false;
-      try { const label2023 = yearCtx.getByText(/^2023$/);
-        if (await label2023.first().isVisible().catch(()=>false)) { await label2023.first().click({ timeout: 2000 }); selected = true; } } catch {}
+      try {
+        const label2023 = yearCtx.getByText(/^2023$/);
+        if (await label2023.first().isVisible().catch(()=>false)) { await label2023.first().click({ timeout: 2000 }); selected = true; }
+      } catch {}
       if (!selected) {
         const r2023 = yearCtx.getByRole('radio', { name: /2023/ }).first();
         if (await r2023.isVisible().catch(()=>false)) {
@@ -238,7 +250,7 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
             }
             return null;
           };
-          let el = byLabel() || document.querySelector('input[type=radio]');
+          const el = byLabel() || document.querySelector('input[type=radio]');
           if (!el) return false;
           el.checked = true; el.click?.();
           el.dispatchEvent(new Event('input', { bubbles: true }));
@@ -255,14 +267,14 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
       if (PAUSE_AFTER_YEAR_MS > 0) await page.waitForTimeout(PAUSE_AFTER_YEAR_MS);
     }
 
-    // 3) Final page
+    // 4) Final page
     log('wait:/wmar/returnStatus');
     await page.waitForURL(u => u.toString().includes('/wmar/returnStatus'), { timeout: 70000 });
     await slow();
 
     log('get-result-ctx');
     const resCtx = await getResultContext(page, steps);
-    if (!resCtx) { await shot('wmar-noresult.png'); throw new Error('Could not find result context'); }
+    if (!resCtx) { await dump('noresult'); throw new Error('Could not find result context'); }
 
     const heading  = await innerTextSafe(resCtx, 'h1', '');
     let fullBody   = await innerTextSafe(resCtx, 'main', '');
@@ -270,14 +282,12 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
 
     const { status, keyLine } = pickStatusAndLine(fullBody);
 
-    // State & history
     let deltaNote = '';
     const prev = loadPrevState();
     if (prev && prev.status === status && prev.keyLine === keyLine) deltaNote = 'No change since yesterday.';
     saveState({ status, keyLine, ts: Date.now() });
     appendHistory({ ts: Date.now(), status, keyLine });
 
-    // Screenshot attachment
     const attachments = [];
     if (RESULT_SHOT) {
       const p = `wmar-result-${Date.now()}.png`;
@@ -295,6 +305,7 @@ async function fillInside(ctx, { ssn, dob, zip }, steps) {
     await browser.close();
   } catch (e) {
     const ts = Date.now();
+    try { await fs.promises.writeFile(`wmar-failure-${ts}.html`, await page.content()); } catch {}
     try { await page.screenshot({ path: `wmar-failure-${ts}.png`, fullPage: true }); } catch {}
     const msg = `Steps: ${steps.join(' > ')}\n\nError: ${e?.message || e}`;
     console.error('FAIL ::', msg);

@@ -2,12 +2,13 @@ name: WMAR daily check
 
 on:
   schedule:
-    - cron: '0 16 * * *'
+    - cron: '0 16 * * *'   # 9am PT
   workflow_dispatch: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
+
     steps:
       - uses: actions/checkout@v4
         with:
@@ -39,15 +40,18 @@ jobs:
         run: |
           node wmar.js || (echo "Retrying once..." && sleep 20 && node wmar.js)
         env:
+          # IRS form
           IRS_SSN: ${{ secrets.IRS_SSN }}
           IRS_DOB: ${{ secrets.IRS_DOB }}
           IRS_ZIP: ${{ secrets.IRS_ZIP }}
 
+          # email (threading = fixed subject)
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
           MAIL_SUBJECT: "WMAR — amended return (daily)"
 
+          # options (not sensitive)
           RESULT_SHOT: '1'
           STATE_PATH: ".wmar_state.json"
           SLOW_FLOW_MS: '0'
@@ -55,12 +59,12 @@ jobs:
           PAUSE_BEFORE_YEAR_MS: '0'
           PAUSE_AFTER_YEAR_MS: '0'
 
-      - name: Upload screenshots (if any)
+      - name: Upload diagnostics (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wmar-screens
           path: |
             wmar-*.png
+            wmar-*.html
           if-no-files-found: ignore
-
