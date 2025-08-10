@@ -1,14 +1,12 @@
 import { chromium } from '@playwright/test';
 import nodemailer from 'nodemailer';
 
-// ---------- helpers ----------
+// ----- helpers -----
 function formatSSN(raw) {
-  const digits = (raw || '').replace(/\D/g, '');            // keep numbers only
-  if (digits.length !== 9) throw new Error('SSN must have 9 digits');
-  return `${digits.slice(0,3)}-${digits.slice(3,5)}-${digits.slice(5)}`;
+  const d = (raw || '').replace(/\D/g, '');
+  if (d.length !== 9) throw new Error('SSN must have 9 digits');
+  return `${d.slice(0,3)}-${d.slice(3,5)}-${d.slice(5)}`;
 }
-function fmt(s) { return (s || '').trim(); }
-
 async function sendEmail(subject, body) {
   const { MAIL_FROM, MAIL_TO, GMAIL_APP_PWD } = process.env;
   const tx = nodemailer.createTransport({
@@ -18,45 +16,43 @@ async function sendEmail(subject, body) {
   await tx.sendMail({ from: MAIL_FROM, to: MAIL_TO, subject, text: body });
 }
 
-// ---------- main ----------
 (async () => {
-  const {
-    IRS_SSN, IRS_DOB, IRS_ZIP,
-  } = process.env;
-
-  const ssn = formatSSN(IRS_SSN); // <-- accepts with/without dashes
-  const dob = fmt(IRS_DOB);       // keep as MM/DD/YYYY (page expects this)
-  const zip = fmt(IRS_ZIP);
+  const ssn = formatSSN(process.env.IRS_SSN);
+  const dob = (process.env.IRS_DOB || '').trim();   // MM/DD/YYYY
+  const zip = (process.env.IRS_ZIP || '').trim();
 
   const browser = await chromium.launch({ headless: true });
-  const context = await browser.newContext({
+  const ctx = await browser.newContext({
     locale: 'en-US',
     timezoneId: 'America/Los_Angeles',
-    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36',
+    userAgent: 'Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/119.0.0.0 Safari/537.36'
   });
-  const page = await context.newPage();
+  const page = await ctx.newPage();
 
   const diag = [];
   const log = s => diag.push(s);
 
   try {
     log('goto');
-    await page.goto('https://sa.www4.irs.gov/wmar/', { waitUntil: 'dom', timeout: 60000 });
+    await page.goto('https://sa.www4.irs.gov/wmar/', { waitUntil: 'domcontentloaded', timeout: 60000 });
 
-    // If the "Select tax year" page appears first, click Continue
-    log('check-continue');
-    const contBtn = page.getByRole('button', { name: /^continue$/i });
-    if (await contBtn.isVisible().catch(() => false)) {
-      await contBtn.click();
-      await page.waitForLoadState('networkidle');
+    // Handles the "Select tax year" screen (can appear first)
+    async function clickContinueIfYearPage() {
+      const cont = page.getByRole('button', { name: /^continue$/i });
+      if (await cont.isVisible().catch(() => false)) {
+        await cont.click();
+        await page.waitForLoadState('networkidle');
+      }
     }
+    log('maybe-continue-1');
+    await clickContinueIfYearPage();
 
-    // Wait for the form (be generous + fallbacks)
+    // Wait for the form (use generous fallbacks)
     log('wait-form');
     const ssnInput = page.getByLabel(/Social Security number/i);
     await Promise.race([
-      ssnInput.waitFor({ state: 'visible', timeout: 20000 }),
-      page.waitForSelector('input[name="tin"], input[id*="ssn"], input[aria-label*="Social"]', { timeout: 20000 })
+      ssnInput.waitFor({ state: 'visible', timeout: 25000 }),
+      page.waitForSelector('input[name="tin"], input[id*="ssn"], input[aria-label*="Social"]', { timeout: 25000 })
     ]);
 
     // Fill SSN
@@ -85,7 +81,7 @@ async function sendEmail(subject, body) {
       await page.locator('input[aria-label*="Zip"], input[name*="zip"]').first().fill(zip);
     }
 
-    // Submit
+    // Submit the form
     log('submit');
     const submit = page.getByRole('button', { name: /submit/i });
     if (await submit.isVisible().catch(() => false)) {
@@ -94,22 +90,23 @@ async function sendEmail(subject, body) {
       await page.locator('button[type="submit"]').first().click();
     }
 
+    // Some flows bounce back to the year page; click Continue again if so.
+    log('maybe-continue-2');
+    await clickContinueIfYearPage();
+
     await page.waitForLoadState('networkidle', { timeout: 30000 });
 
-    // Extract status
+    // Extract result
     log('extract');
     const heading = await page.locator('h1').first().innerText().catch(() => '');
     const statusBlock = await page.locator('main').innerText().catch(() => 'Could not read status.');
 
-    const subject = 'IRS Amended Return Status — WMAR (daily)'; // keep fixed for threading
-    const body = `Heading: ${heading}\n\n${statusBlock}`;
-    await sendEmail(subject, body);
-  } catch (err) {
-    // Diagnostics: screenshot + failure email
+    await sendEmail('IRS Amended Return Status — WMAR (daily)', `Heading: ${heading}\n\n${statusBlock}`);
+  } catch (e) {
     const ts = Date.now();
     try { await page.screenshot({ path: `wmar-failure-${ts}.png`, fullPage: true }); } catch {}
-    await sendEmail('WMAR check FAILED (daily)', `Steps: ${diag.join(' > ')}\n\nError: ${err}`);
-    throw err;
+    await sendEmail('WMAR check FAILED (daily)', `Steps: ${diag.join(' > ')}\n\nError: ${e}`);
+    throw e;
   } finally {
     await browser.close();
   }
