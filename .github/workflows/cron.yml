@@ -2,7 +2,6 @@ name: WMAR daily check
 
 on:
   schedule:
-    # 16:00 UTC ≈ 9:00 AM Pacific during DST. Adjust if needed.
     - cron: '0 16 * * *'
   workflow_dispatch: {}
 
@@ -14,8 +13,13 @@ jobs:
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
-      - run: npm ci
+
+      # install deps (works without a lockfile)
+      - run: npm install --no-fund --no-audit
+
+      # install Chromium + libs for Playwright
       - run: npx playwright install --with-deps chromium
+
       - run: node wmar.js
         env:
           IRS_SSN: ${{ secrets.IRS_SSN }}
