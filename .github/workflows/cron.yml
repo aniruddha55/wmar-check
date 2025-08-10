@@ -20,14 +20,6 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # ---- Email-only smoke test (removed) ----
-      # - name: Send test email
-      #   run: node mail-test.js
-      #   env:
-      #     MAIL_FROM: ${{ secrets.MAIL_FROM }}
-      #     MAIL_TO: ${{ secrets.MAIL_TO }}
-      #     GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
-
       - name: Run WMAR script
         run: node wmar.js
         env:
@@ -37,4 +29,12 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
+
+      - name: Upload failure screenshots
+        if: failure()
+        uses: actions/upload-artifact@v4
+        with:
+          name: wmar-debug
+          path: |
+            wmar-failure-*.png
 
