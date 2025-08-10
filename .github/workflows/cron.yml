@@ -1,0 +1,26 @@
+name: WMAR daily check
+
+on:
+  schedule:
+    # 16:00 UTC ≈ 9:00 AM Pacific during DST. Adjust if needed.
+    - cron: '0 16 * * *'
+  workflow_dispatch: {}
+
+jobs:
+  run:
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '20'
+      - run: npm ci
+      - run: npx playwright install --with-deps chromium
+      - run: node wmar.js
+        env:
+          IRS_SSN: ${{ secrets.IRS_SSN }}
+          IRS_DOB: ${{ secrets.IRS_DOB }}
+          IRS_ZIP: ${{ secrets.IRS_ZIP }}
+          MAIL_FROM: ${{ secrets.MAIL_FROM }}
+          MAIL_TO: ${{ secrets.MAIL_TO }}
+          GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
