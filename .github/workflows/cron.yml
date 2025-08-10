@@ -33,25 +33,23 @@ jobs:
       - name: Install deps
         run: npm install --no-fund --no-audit
 
-      - name: Install Playwright Chromium
-        run: npx playwright install --with-deps chromium
+      - name: Install Playwright browsers
+        run: |
+          npx playwright install --with-deps chromium
+          npx playwright install --with-deps firefox
 
       - name: Run WMAR script (headless)
-        run: |
-          node wmar.js || (echo "Retrying once..." && sleep 20 && node wmar.js)
+        run: node wmar.js
         env:
-          # IRS form
           IRS_SSN: ${{ secrets.IRS_SSN }}
           IRS_DOB: ${{ secrets.IRS_DOB }}
           IRS_ZIP: ${{ secrets.IRS_ZIP }}
 
-          # email (threading = fixed subject)
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
           MAIL_SUBJECT: "WMAR — amended return (daily)"
 
-          # options (not sensitive)
           RESULT_SHOT: '1'
           STATE_PATH: ".wmar_state.json"
           SLOW_FLOW_MS: '0'
