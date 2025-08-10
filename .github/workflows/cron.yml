@@ -1,14 +1,7 @@
 name: WMAR daily check
 
 on:
-  # manual runs – choose test or wmar when you click "Run workflow"
-  workflow_dispatch:
-    inputs:
-      mode:
-        description: "Choose: test (email only) or wmar (full run)"
-        required: false
-        default: "test"
-  # daily schedule (runs the real WMAR script)
+  workflow_dispatch: {}
   schedule:
     - cron: '0 16 * * *'   # ~9:00 AM PT during DST
 
@@ -27,18 +20,15 @@ jobs:
       - name: Install Playwright Chromium
         run: npx playwright install --with-deps chromium
 
-      # ---- Email-only smoke test (runs ONLY when you choose mode=test) ----
-      - name: Send test email
-        if: github.event_name == 'workflow_dispatch' && github.event.inputs.mode == 'test'
-        run: node mail-test.js
-        env:
-          MAIL_FROM: ${{ secrets.MAIL_FROM }}
-          MAIL_TO: ${{ secrets.MAIL_TO }}
-          GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
+      # ---- Email-only smoke test (removed) ----
+      # - name: Send test email
+      #   run: node mail-test.js
+      #   env:
+      #     MAIL_FROM: ${{ secrets.MAIL_FROM }}
+      #     MAIL_TO: ${{ secrets.MAIL_TO }}
+      #     GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
 
-      # ---- Real WMAR check (runs on schedule, or when you choose mode=wmar) ----
       - name: Run WMAR script
-        if: github.event_name == 'schedule' || github.event.inputs.mode == 'wmar'
         run: node wmar.js
         env:
           IRS_SSN: ${{ secrets.IRS_SSN }}
@@ -47,3 +37,4 @@ jobs:
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
+
