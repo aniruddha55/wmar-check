@@ -2,21 +2,26 @@ name: WMAR daily check
 
 on:
   schedule:
-    - cron: '0 16 * * *'   # 9am PT
+    - cron: '0 16 * * *'
   workflow_dispatch: {}
 
 jobs:
   run:
     runs-on: ubuntu-latest
-
     steps:
       - uses: actions/checkout@v4
+        with:
+          ref: main
+
+      - name: Show script header (wmar.js)
+        run: |
+          echo "Commit: $(git rev-parse --short HEAD)"
+          head -n 40 wmar.js
 
       - uses: actions/setup-node@v4
         with:
           node-version: '20'
 
-      # cache a tiny state file so we can say "No change since yesterday."
       - name: Cache WMAR state
         id: cache-state
         uses: actions/cache@v4
@@ -31,34 +36,31 @@ jobs:
         run: npx playwright install --with-deps chromium
 
       - name: Run WMAR script (headless)
-        run: node wmar.js
+        run: |
+          node wmar.js || (echo "Retrying once..." && sleep 20 && node wmar.js)
         env:
-          # IRS form
           IRS_SSN: ${{ secrets.IRS_SSN }}
           IRS_DOB: ${{ secrets.IRS_DOB }}
           IRS_ZIP: ${{ secrets.IRS_ZIP }}
 
-          # mail (threading relies on constant subject)
           MAIL_FROM: ${{ secrets.MAIL_FROM }}
           MAIL_TO: ${{ secrets.MAIL_TO }}
           GMAIL_APP_PWD: ${{ secrets.GMAIL_APP_PWD }}
           MAIL_SUBJECT: "WMAR — amended return (daily)"
 
-          # options
-          RESULT_SHOT: '1'                    # attach full-page screenshot
-          STATE_PATH: ".wmar_state.json"      # enables "No change since yesterday"
-          SLOW_FLOW_MS: '0'                   # headless: no visual pacing
+          RESULT_SHOT: '1'
+          STATE_PATH: ".wmar_state.json"
+          SLOW_FLOW_MS: '0'
           VERIFY_MS: '0'
           PAUSE_BEFORE_YEAR_MS: '0'
           PAUSE_AFTER_YEAR_MS: '0'
 
-      # always upload the latest screenshot/failure image as an artifact too (optional)
       - name: Upload screenshots (if any)
         if: always()
         uses: actions/upload-artifact@v4
         with:
           name: wmar-screens
           path: |
-            wmar-result-*.png
-            wmar-failure-*.png
+            wmar-*.png
           if-no-files-found: ignore
+
